@@ -81,8 +81,8 @@ namespace PerformanceTest
 
         private async Task AuthAndConnectCore(bool retry = false)
         {
-            _lastAuthTime = DateTime.UtcNow;
             (string url, string accessToken) = await GetAuth();
+            _lastAuthTime = DateTime.UtcNow;
 
             if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(accessToken))
             {
@@ -181,34 +181,30 @@ namespace PerformanceTest
 
         private async Task<(string, string)> GetAuth()
         {
-            if (accessInfo == null || accessInfo.TokenExpire < DateTimeOffset.UtcNow.AddSeconds(-10).ToUnixTimeSeconds())
+            string result = await _client.GetStringAsync($"{host}/auth/login/?username={userId}&password=admin");
+
+            if (string.IsNullOrEmpty(result))
             {
-                string result = await _client.GetStringAsync($"{host}/auth/login/?username={userId}&password=admin");
-
-                if (string.IsNullOrEmpty(result))
-                {
-                    logger.Error($"用户 {userId}登录失败");
-                    return (null, null);
-                }
-
-                try
-                {
-                    accessInfo = JsonConvert.DeserializeObject<AccessInfo>(result);
-                    if (!string.IsNullOrEmpty(accessInfo.Error))
-                    {
-                        logger.Error($"用户 {userId} 登录失败," + accessInfo.Error);
-                        accessInfo = null;
-                        return (null, null);
-                    }
-                    return (accessInfo.SignalRUrl, accessInfo.SignalRToken);
-                }
-                catch (Exception ex)
-                {
-                    logger.Error(ex, $"用户 {userId} 登录失败");
-                    return (null, null);
-                }
+                logger.Error($"用户 {userId}登录失败");
+                return (null, null);
             }
-            return (accessInfo.SignalRUrl, accessInfo.SignalRToken);
+
+            try
+            {
+                accessInfo = JsonConvert.DeserializeObject<AccessInfo>(result);
+                if (!string.IsNullOrEmpty(accessInfo.Error))
+                {
+                    logger.Error($"用户 {userId} 登录失败," + accessInfo.Error);
+                    accessInfo = null;
+                    return (null, null);
+                }
+                return (accessInfo.SignalRUrl, accessInfo.SignalRToken);
+            }
+            catch (Exception ex)
+            {
+                logger.Error(ex, $"用户 {userId} 登录失败");
+                return (null, null);
+            }
         }
 
         public async Task RunTest(byte[] content)
