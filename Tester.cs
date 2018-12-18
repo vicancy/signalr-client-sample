@@ -16,6 +16,8 @@ namespace PerformanceTest
 {
     class Tester
     {
+        private const int MaxReconnectWaitMilliseconds = 3000;
+        private const int MinReconnectWaitMilliseconds = 300;
         private static readonly HttpClient _client = new HttpClient();
 
         protected static NLog.Logger logger = NLog.LogManager.GetCurrentClassLogger();
@@ -144,7 +146,7 @@ namespace PerformanceTest
                 try
                 {
                     // delay a random value < 20s
-                    await Task.Delay(new Random((int)Stopwatch.GetTimestamp()).Next(300, 20000));
+                    await Task.Delay(new Random((int)Stopwatch.GetTimestamp()).Next(MinReconnectWaitMilliseconds, MaxReconnectWaitMilliseconds));
                     if (DateTime.UtcNow > _lastAuthTime.AddMinutes(50))
                     {
                         // Reauth
