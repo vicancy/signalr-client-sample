@@ -171,10 +171,12 @@ namespace PerformanceTest
                     minRate = currentRate;
                 }
 
-                logger.Info($"Starts {currentCount}/{count}, current {currentRate:.00}/s, max {maxRate:.00}/s, min {minRate:.00}/s; " +
+                var sb = new StringBuilder();
+                sb.Append($"Starts {currentCount}/{count}, current {currentRate:.00}/s, max {maxRate:.00}/s, min {minRate:.00}/s; " +
                     $"Connect Elapsed: max {testers.Max(s => s.ConnectStats.MaxElapsed):.00}, min {testers.Min(s => s.ConnectStats.MinElapsed):.00}, avg {testers.Average(s => s.ConnectStats.AvgElapsed):.00}");
 
-                LogExceptions(testers, logger);
+                sb = LogExceptions(testers, sb);
+                logger.Info(sb);
                 if (currentCount == count)
                 {
                     break;
@@ -186,32 +188,33 @@ namespace PerformanceTest
             while (true)
             {
                 await Task.Delay(2000);
-                logger.Info($"[connected]{testers.Count(s => s.IsConnected)}/[connecting]{testers.Count(s => s.IsConnecting)}/[total]{count};" +
-                    $" sending {testers.Sum(s => s.SendMessageStats.ReceivedCount)} messages" +
-                    $"\n\t Delay: avergae {testers.Average(s => s.SendMessageStats.AvgElapsed)}, " +
-                    $" max {testers.Max(s => s.SendMessageStats.MaxElapsed)}, min {testers.Min(s => s.SendMessageStats.MinElapsed)} " +
-                    $"\n\tSend: max success {testers.Max(s => s.SendMessageStats.SuccessCount)};  max notsent {testers.Max(s => s.SendMessageStats.NotSentCount)}; max error {testers.Max(s => s.SendMessageStats.ErrorCount)};" +
-                    $"\n\tNotReceived: max {testers.Max(s => s.SendMessageStats.SuccessCount - s.SendMessageStats.ReceivedCount)}");
+                var sb = new StringBuilder();
+                sb.Append($"\n\t[connected]{testers.Count(s => s.IsConnected)}/[connecting]{testers.Count(s => s.IsConnecting)}/[total]{count};" +
+                    $"\n\t[send]{testers.Sum(s => s.SendMessageStats.ReceivedCount)} messages," +
+                    $" avg {testers.Average(s => s.SendMessageStats.AvgElapsed)}ms, " +
+                    $" max {testers.Max(s => s.SendMessageStats.MaxElapsed)}ms, min {testers.Min(s => s.SendMessageStats.MinElapsed)}ms " +
+                    $"\n\t[send]max success {testers.Max(s => s.SendMessageStats.SuccessCount)};  max not sent {testers.Max(s => s.SendMessageStats.NotSentCount)}; max error {testers.Max(s => s.SendMessageStats.ErrorCount)};" +
+                    $" max not received {testers.Max(s => s.SendMessageStats.SuccessCount - s.SendMessageStats.ReceivedCount)}");
 
                 if (testers.Any(s => s.RecoverStats.SuccessCount + s.RecoverStats.ErrorCount > 0))
                 {
-                    logger.Info($"\n\tReconnect: max: {testers.Max(s => s.RecoverStats.MaxElapsed)}, avg: {testers.Average(s => s.RecoverStats.AvgElapsed)} ");
+                    sb.Append($"\n\t[retry] max retry {testers.Max(s => s.RecoverStats.ErrorCount + 1)}, avg {testers.Average(s => s.RecoverStats.ErrorCount + 1)}");
+                    sb.Append($"\n\t[reconnect] max {testers.Max(s => s.RecoverStats.MaxElapsed)}ms, avg {testers.Average(s => s.RecoverStats.AvgElapsed)}ms, min {testers.Min(s => s.RecoverStats.MinElapsed)}ms ");
                 }
 
-                LogExceptions(testers, logger);
+                sb = LogExceptions(testers, sb);
+                logger.Info(sb);
             }
         }
 
-
-
-        private static void LogExceptions(ConcurrentBag<Tester> testers, NLog.Logger logger)
+        private static StringBuilder LogExceptions(ConcurrentBag<Tester> testers, StringBuilder sb)
         {
             var dictionary = new Dictionary<Type, ExceptionInfo>();
             foreach (var i in testers.SelectMany(s => s.ConnectStats.Exceptions.Concat(s.RecoverStats.Exceptions)))
             {
                 if (dictionary.TryGetValue(i.Key, out var val))
                 {
-                    val.Merge(i.Value);
+                    dictionary[i.Key] = val.GetMergedExceptionInfo(i.Value);
                 }
                 else
                 {
@@ -221,12 +224,14 @@ namespace PerformanceTest
 
             if (dictionary.Count > 0)
             {
-                logger.Info($"\nExceptions\n\t|\tFirst\t|\tLast\t|\tCount\t|\tDetail\t");
+                sb.Append($"\n\t[EXCEPTIONS]\n\t|\tFirst\t|\tLast\t|\tCount\t|\tDetail\t");
                 foreach (var i in dictionary)
                 {
-                    logger.Info($"\n\t|{i.Value.FirstOccurUtc}|{i.Value.LastOccurUtc}|{i.Value.Count}|{i.Value.Exception.Message}");
+                    sb.Append($"\n\t|{i.Value.FirstOccurUtc}|{i.Value.LastOccurUtc}|{i.Value.Count}|{i.Value.Exception.Message}");
                 }
             }
+
+            return sb;
         }
     }
 }

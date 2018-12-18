@@ -28,16 +28,19 @@ namespace PerformanceTest
             LastOccurUtc = DateTime.UtcNow;
         }
 
-        public void Merge(ExceptionInfo other)
+        public ExceptionInfo GetMergedExceptionInfo(ExceptionInfo other)
         {
             if (ExceptionType != other.ExceptionType)
             {
                 throw new ArgumentException();
             }
 
-            Count += other.Count;
-            FirstOccurUtc = FirstOccurUtc < other.FirstOccurUtc ? FirstOccurUtc : other.FirstOccurUtc;
-            LastOccurUtc = LastOccurUtc > other.LastOccurUtc ? LastOccurUtc : other.LastOccurUtc;
+            return new ExceptionInfo(Exception)
+            {
+                Count = Count + other.Count,
+                FirstOccurUtc = FirstOccurUtc < other.FirstOccurUtc ? FirstOccurUtc : other.FirstOccurUtc,
+                LastOccurUtc = LastOccurUtc > other.LastOccurUtc ? LastOccurUtc : other.LastOccurUtc,
+            };
         }
     }
 }
