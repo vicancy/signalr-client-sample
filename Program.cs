@@ -29,7 +29,7 @@ namespace PerformanceTest
             public int MessageCount { set; get; } = 0;
 
             [Option('u', "Url", Required = false, HelpText = "服务器地址")]
-            public string Url { set; get; } 
+            public string Url { set; get; } = "";
 
             [Option('s', "Size", Required = false, Default = 100, HelpText = "消息字节数，最大10000，最小1")]
             public int Size { set; get; } = 100;
@@ -193,24 +193,25 @@ namespace PerformanceTest
                     $"\n\tSend: max success {testers.Max(s => s.SendMessageStats.SuccessCount)};  max notsent {testers.Max(s => s.SendMessageStats.NotSentCount)}; max error {testers.Max(s => s.SendMessageStats.ErrorCount)};" +
                     $"\n\tNotReceived: max {testers.Max(s => s.SendMessageStats.SuccessCount - s.SendMessageStats.ReceivedCount)}");
 
-                if (testers.Any(s => s.RecoverStats.TotalCount > 0))
+                if (testers.Any(s => s.RecoverStats.SuccessCount + s.RecoverStats.ErrorCount > 0))
                 {
                     logger.Info($"\n\tReconnect: max: {testers.Max(s => s.RecoverStats.MaxElapsed)}, avg: {testers.Average(s => s.RecoverStats.AvgElapsed)} ");
                 }
 
                 LogExceptions(testers, logger);
             }
-
         }
+
+
 
         private static void LogExceptions(ConcurrentBag<Tester> testers, NLog.Logger logger)
         {
-            var dictionary = new Dictionary<Type, (Exception, int)>();
+            var dictionary = new Dictionary<Type, ExceptionInfo>();
             foreach (var i in testers.SelectMany(s => s.ConnectStats.Exceptions.Concat(s.RecoverStats.Exceptions)))
             {
                 if (dictionary.TryGetValue(i.Key, out var val))
                 {
-                    val.Item2 += i.Value.Item2;
+                    val.Merge(i.Value);
                 }
                 else
                 {
@@ -220,7 +221,11 @@ namespace PerformanceTest
 
             if (dictionary.Count > 0)
             {
-                logger.Info($"\n\tExceptions: \n\t\t{string.Join("\n\t\t\t", dictionary.Select(s => $"{s.Value.Item2}\t{s.Key.Name}: {s.Value.Item1.Message}"))}");
+                logger.Info($"\nExceptions\n\t|\tFirst\t|\tLast\t|\tCount\t|\tDetail\t");
+                foreach (var i in dictionary)
+                {
+                    logger.Info($"\n\t|{i.Value.FirstOccurUtc}|{i.Value.LastOccurUtc}|{i.Value.Count}|{i.Value.Exception.Message}");
+                }
             }
         }
     }

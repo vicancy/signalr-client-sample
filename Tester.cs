@@ -9,72 +9,11 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Diagnostics;
-using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using System.Linq;
 
 namespace PerformanceTest
 {
-    internal class StatsInfo
-    {
-        public int ErrorCount;
-        public int TotalCount;
-        public int NotSentCount;
-        public int SuccessCount;
-        public int ReceivedCount;
-
-        public ConcurrentDictionary<Type, (Exception,int)> Exceptions = new ConcurrentDictionary<Type, (Exception, int)>();
-
-        public double? MinElapsed;
-        public double? MaxElapsed;
-        public double? AvgElapsed;
-
-        private double _currentElapsed;
-        private readonly object _lock = new object();
-
-        private long _count;
-        private double _sum;
-        private readonly string _name;
-        private readonly string _user;
-        private readonly NLog.ILogger _logger;
-        public StatsInfo(string name, string user, NLog.ILogger logger)
-        {
-            _name = name;
-            _logger = logger;
-            _user = user;
-        }
-        public double SetElapsed(DateTimeOffset previousTimeStamp)
-        {
-            lock (_lock)
-            {
-                _count++;
-                var now = DateTimeOffset.Now;
-                _currentElapsed = (now - previousTimeStamp).TotalMilliseconds;
-                if (MinElapsed == null || MinElapsed > _currentElapsed)
-                {
-                    MinElapsed = _currentElapsed;
-                }
-                if (MaxElapsed == null || MaxElapsed < _currentElapsed)
-                {
-                    MaxElapsed = _currentElapsed;
-                }
-                _sum +=_currentElapsed;
-                AvgElapsed = _sum / _count;
-
-                return _currentElapsed;
-            }
-        }
-
-        public void AddException(Exception e)
-        {
-            var count = Exceptions.AddOrUpdate(e.GetType(), (e, 1), (s, c) =>
-            {
-                c.Item2 += 1;
-                return c;
-            });
-        }
-    }
-
     class Tester
     {
         private static readonly HttpClient _client = new HttpClient();
@@ -98,7 +37,6 @@ namespace PerformanceTest
         private AccessInfo accessInfo;
 
         public readonly string userId;
-
 
         private DateTimeOffset lastConnectTime;
 
@@ -141,7 +79,7 @@ namespace PerformanceTest
 
         private async Task AuthAndConnectCore(bool retry = false)
         {
-            _lastAuthTime = DateTime.Now;
+            _lastAuthTime = DateTime.UtcNow;
             (string url, string accessToken) = await GetAuth();
 
             if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(accessToken))
@@ -200,14 +138,14 @@ namespace PerformanceTest
                 Interlocked.Increment(ref ConnectStats.ErrorCount);
             }
 
-            var reconnectNow = DateTime.Now;
+            var reconnectNow = DateTime.UtcNow;
             while (true)
             {
                 try
                 {
                     // delay a random value < 20s
                     await Task.Delay(new Random((int)Stopwatch.GetTimestamp()).Next(300, 20000));
-                    if (DateTime.Now > _lastAuthTime.AddMinutes(50))
+                    if (DateTime.UtcNow > _lastAuthTime.AddMinutes(50))
                     {
                         // Reauth
                         await AuthAndConnectCore(true);
@@ -234,7 +172,7 @@ namespace PerformanceTest
 
         private async Task ConnectCore()
         {
-            lastConnectTime = DateTime.Now;
+            lastConnectTime = DateTime.UtcNow;
             Interlocked.Increment(ref ConnectStats.TotalCount);
             await connection.StartAsync();
         }
@@ -279,7 +217,7 @@ namespace PerformanceTest
                 {
                     await connection.SendAsync("PerformanceTest", new MessageBody
                     {
-                        CreatedTime = DateTimeOffset.Now,
+                        CreatedTime = DateTimeOffset.UtcNow,
                         Contnet = content
                     });
 
