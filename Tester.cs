@@ -79,56 +79,70 @@ namespace PerformanceTest
             }
         }
 
+        private SemaphoreSlim _lock = new SemaphoreSlim(1);
+
         private async Task AuthAndConnectCore(bool retry = false)
         {
-            (string url, string accessToken) = await GetAuth();
-            _lastAuthTime = DateTime.UtcNow;
-
-            if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(accessToken))
+            if (!_lock.Wait(0))
             {
-                throw new ArgumentNullException("url or accesstoken is null");
+                return;
             }
 
-            if (retry)
+            try
             {
-                await connection.DisposeAsync();
-            }
+                (string url, string accessToken) = await GetAuth();
+                _lastAuthTime = DateTime.UtcNow;
 
-            connection = new HubConnectionBuilder()
-                .WithUrl(url, options =>
+                if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(accessToken))
                 {
-                    options.AccessTokenProvider = () => Task.FromResult(accessToken);
-                    options.CloseTimeout = TimeSpan.FromSeconds(15);
-                    options.Transports = HttpTransportType.WebSockets;
-                    options.SkipNegotiation = true;
-                })
-                //.AddMessagePackProtocol()
-                .Build();
+                    throw new ArgumentNullException("url or accesstoken is null");
+                }
 
-            connection.Closed += ex =>
+                if (retry)
+                {
+                    await connection.DisposeAsync();
+                }
+
+                connection = new HubConnectionBuilder()
+                    .WithUrl(url, options =>
+                    {
+                        options.AccessTokenProvider = () => Task.FromResult(accessToken);
+                        options.CloseTimeout = TimeSpan.FromSeconds(15);
+                        options.Transports = HttpTransportType.WebSockets;
+                        options.SkipNegotiation = true;
+                    })
+                    //.AddMessagePackProtocol()
+                    .Build();
+
+                connection.Closed += ex =>
+                {
+                    IsConnected = false;
+                    IsConnecting = false;
+                    return RetryConnect(ex);
+                };
+
+                connection.On("Connected", () =>
+                {
+                    Interlocked.Increment(ref ConnectStats.SuccessCount);
+
+                    var elapsed = ConnectStats.SetElapsed(lastConnectTime);
+
+                    IsConnected = true;
+                    IsConnecting = false;
+                });
+
+                connection.On<MessageBody>("PerformanceTest", message =>
+                {
+                    Interlocked.Increment(ref SendMessageStats.ReceivedCount);
+                    SendMessageStats.SetElapsed(message.CreatedTime);
+                });
+
+                await ConnectCore();
+            }
+            finally
             {
-                IsConnected = false;
-                IsConnecting = false;
-                return RetryConnect(ex);
-            };
-
-            connection.On("Connected", () =>
-            {
-                Interlocked.Increment(ref ConnectStats.SuccessCount);
-
-                var elapsed = ConnectStats.SetElapsed(lastConnectTime);
-
-                IsConnected = true;
-                IsConnecting = false;
-            });
-
-            connection.On<MessageBody>("PerformanceTest", message =>
-            {
-                Interlocked.Increment(ref SendMessageStats.ReceivedCount);
-                SendMessageStats.SetElapsed(message.CreatedTime);
-            });
-
-            await ConnectCore();
+                _lock.Release();
+            }
         }
 
         private async Task RetryConnect(Exception ex)
