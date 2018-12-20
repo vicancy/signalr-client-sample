@@ -14,13 +14,13 @@ namespace PerformanceTest
 {
     class Program
     {
-        //static readonly string host = "https://golf-asrs.azurewebsites.net/";
-        //static readonly string host = "http://localhost:58664/";
+        static readonly string host = "https://signalrgameserver20181211040325.azurewebsites.net";
+        //static readonly string host = "http://localhost:5000";
 
         public class Options
         {
             [Option('t', "ThreadCount", Required = false, HelpText = "并发线程数")]
-            public int ThreadCount { set; get; } = 33;
+            public int ThreadCount { set; get; } = 1;
 
             [Option('d', "DelayMilliseconds", Required = false, HelpText = "消息间隔时间，单位毫秒，最小10")]
             public int DelayMilliseconds { set; get; } = 5000;
@@ -29,7 +29,7 @@ namespace PerformanceTest
             public int MessageCount { set; get; } = 0;
 
             [Option('u', "Url", Required = false, HelpText = "服务器地址")]
-            public string Url { set; get; } = "";
+            public string Url { set; get; } = host;
 
             [Option('s', "Size", Required = false, Default = 100, HelpText = "消息字节数，最大10000，最小1")]
             public int Size { set; get; } = 100;
@@ -189,18 +189,12 @@ namespace PerformanceTest
             {
                 await Task.Delay(2000);
                 var sb = new StringBuilder();
-                sb.Append($"\n\t[connected]{testers.Count(s => s.IsConnected)}/[connecting]{testers.Count(s => s.IsConnecting)}/[total]{count};" +
+                sb.Append($"\n\t[connected]{testers.Count(s => s.ConnectStatus == Status.Connected)}/[connecting]{testers.Count(s => s.ConnectStatus == Status.Connecting)}/[disconnected]{testers.Count(s => s.ConnectStatus == Status.Disconnected)}/[total]{count};" +
                     $"\n\t[send]{testers.Sum(s => s.SendMessageStats.ReceivedCount)} messages," +
                     $" avg {testers.Average(s => s.SendMessageStats.AvgElapsed)}ms, " +
                     $" max {testers.Max(s => s.SendMessageStats.MaxElapsed)}ms, min {testers.Min(s => s.SendMessageStats.MinElapsed)}ms " +
                     $"\n\t[send]max success {testers.Max(s => s.SendMessageStats.SuccessCount)};  max not sent {testers.Max(s => s.SendMessageStats.NotSentCount)}; max error {testers.Max(s => s.SendMessageStats.ErrorCount)};" +
                     $" max not received {testers.Max(s => s.SendMessageStats.SuccessCount - s.SendMessageStats.ReceivedCount)}");
-
-                if (testers.Any(s => s.RecoverStats.SuccessCount + s.RecoverStats.ErrorCount > 0))
-                {
-                    sb.Append($"\n\t[retry] max retry {testers.Max(s => s.RecoverStats.ErrorCount + 1)}, avg {testers.Average(s => s.RecoverStats.ErrorCount + 1)}");
-                    sb.Append($"\n\t[reconnect] max {testers.Max(s => s.RecoverStats.MaxElapsed)}ms, avg {testers.Average(s => s.RecoverStats.AvgElapsed)}ms, min {testers.Min(s => s.RecoverStats.MinElapsed)}ms ");
-                }
 
                 sb = LogExceptions(testers, sb);
                 logger.Info(sb);
@@ -224,10 +218,12 @@ namespace PerformanceTest
 
             if (dictionary.Count > 0)
             {
+                sb.Append($"\n\t[retry] max retry {testers.Max(s => s.RecoverStats.ErrorCount + 1)}, avg {testers.Average(s => s.RecoverStats.ErrorCount + 1)}");
+                sb.Append($"\n\t[reconnect] max {testers.Max(s => s.RecoverStats.MaxElapsed)}ms, avg {testers.Average(s => s.RecoverStats.AvgElapsed)}ms, min {testers.Min(s => s.RecoverStats.MinElapsed)}ms ");
                 sb.Append($"\n\t[EXCEPTIONS]\n\t|\tFirst\t|\tLast\t|\tCount\t|\tDetail\t");
                 foreach (var i in dictionary)
                 {
-                    sb.Append($"\n\t|{i.Value.FirstOccurUtc}|{i.Value.LastOccurUtc}|{i.Value.Count}|{i.Value.Exception.Message}");
+                    sb.Append($"\n\t|{i.Value.FirstOccurUtc}({i.Value.FirstOccurUser})|{i.Value.LastOccurUtc}({i.Value.LastOccurUser})|{i.Value.Count}|{i.Value.Exception}");
                 }
             }
 

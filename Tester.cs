@@ -14,19 +14,33 @@ using System.Linq;
 
 namespace PerformanceTest
 {
+    enum Status
+    {
+        Connected,
+        Connecting,
+        Reconnecting,
+        Disconnected,
+    }
+
     class Tester
     {
         private const int MaxReconnectWaitMilliseconds = 3000;
         private const int MinReconnectWaitMilliseconds = 300;
         private static readonly HttpClient _client = new HttpClient();
-
+        private static readonly TimeSpan AuthExpire = TimeSpan.FromMinutes(55);
         protected static NLog.Logger logger = NLog.LogManager.GetCurrentClassLogger();
 
-        private HubConnection connection;
+        private readonly SemaphoreSlim _connectLock = new SemaphoreSlim(1);
 
-        public bool IsConnected { get; protected set; } = false;
+        private DateTimeOffset _lastConnectTime;
 
-        public bool IsConnecting { get; protected set; } = false;
+        private DateTimeOffset _lastAuthTime = DateTimeOffset.MinValue;
+
+        private readonly string _host;
+
+        private readonly string _userId;
+
+        public HubConnection Connection { get; private set; }
 
         public StatsInfo ConnectStats { get; private set; }
 
@@ -34,77 +48,96 @@ namespace PerformanceTest
 
         public StatsInfo SendMessageStats { get; private set; }
 
-        private readonly string host;
-
-        private AccessInfo accessInfo;
-
-        public readonly string userId;
-
-        private DateTimeOffset lastConnectTime;
-
-        private DateTimeOffset _lastAuthTime;
-
         public Tester(string host, string userId = null)
         {
-            this.host = host;
+            this._host = host;
             if (string.IsNullOrWhiteSpace(userId))
             {
-                this.userId = Guid.NewGuid().ToString();
+                this._userId = Guid.NewGuid().ToString();
             }
             else
             {
-                this.userId = userId;
+                this._userId = userId;
             }
             ConnectStats = new StatsInfo("connect", userId, logger);
             RecoverStats = new StatsInfo("recover", userId, logger);
             SendMessageStats = new StatsInfo("echo", userId, logger);
         }
 
-        public async Task Connect()
-        {
+        public Status ConnectStatus { get; private set; } = Status.Disconnected;
 
-            if (IsConnected || IsConnecting)
+        public Task Connect()
+        {
+            return RetryConnect(null);
+        }
+
+        private async Task RetryConnect(Exception ex)
+        {
+            if (!_connectLock.Wait(0))
             {
+                // someone is already connecting
                 return;
             }
-            IsConnecting = true;
 
             try
             {
-                await AuthAndConnectCore();
+                if (ex != null)
+                {
+                    ConnectStats.AddException(ex);
+                    Interlocked.Increment(ref ConnectStats.ErrorCount);
+                }
+
+                var reconnectNow = DateTime.UtcNow;
+                while (true)
+                {
+                    try
+                    {
+                        // delay a random value < 20s
+                        await Task.Delay(new Random((int)Stopwatch.GetTimestamp()).Next(MinReconnectWaitMilliseconds, MaxReconnectWaitMilliseconds));
+                        await ConnectCore();
+                        RecoverStats.SetElapsed(reconnectNow);
+                        Interlocked.Increment(ref RecoverStats.SuccessCount);
+                        break;
+                    }
+                    catch (Exception e)
+                    {
+                        RecoverStats.AddException(e);
+
+                        Interlocked.Increment(ref RecoverStats.ErrorCount);
+                        Interlocked.Increment(ref ConnectStats.ErrorCount);
+                    }
+                }
             }
-            catch (Exception e)
+            finally
             {
-                await RetryConnect(e);
+                _connectLock.Release();
             }
         }
 
-        private SemaphoreSlim _lock = new SemaphoreSlim(1);
-
-        private async Task AuthAndConnectCore(bool retry = false)
+        private async Task ConnectCore()
         {
-            if (!_lock.Wait(0))
-            {
-                return;
-            }
-
-            try
+            ConnectStatus = Status.Connecting;
+            var now = DateTimeOffset.UtcNow;
+            if (now - _lastAuthTime > AuthExpire)
             {
                 (string url, string accessToken) = await GetAuth();
-                _lastAuthTime = DateTime.UtcNow;
 
                 if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(accessToken))
                 {
                     throw new ArgumentNullException("url or accesstoken is null");
                 }
 
-                if (retry)
+                if (Connection != null)
                 {
-                    await connection.DisposeAsync();
+                    Connection.Closed -= OnClosed;
+                    // 1. dispose the old connection first
+                    await Connection.DisposeAsync();
+                    Connection = null;
                 }
 
-                connection = new HubConnectionBuilder()
+                var connection = new HubConnectionBuilder()
                     .WithUrl(url, options =>
+                    //.WithUrl("http://localhost:8080/client?hub=gamehub", options =>
                     {
                         options.AccessTokenProvider = () => Task.FromResult(accessToken);
                         options.CloseTimeout = TimeSpan.FromSeconds(15);
@@ -114,21 +147,14 @@ namespace PerformanceTest
                     //.AddMessagePackProtocol()
                     .Build();
 
-                connection.Closed += ex =>
-                {
-                    IsConnected = false;
-                    IsConnecting = false;
-                    return RetryConnect(ex);
-                };
+                connection.Closed += OnClosed;
 
                 connection.On("Connected", () =>
                 {
+                    ConnectStatus = Status.Connected;
                     Interlocked.Increment(ref ConnectStats.SuccessCount);
 
-                    var elapsed = ConnectStats.SetElapsed(lastConnectTime);
-
-                    IsConnected = true;
-                    IsConnecting = false;
+                    var elapsed = ConnectStats.SetElapsed(_lastConnectTime);
                 });
 
                 connection.On<MessageBody>("PerformanceTest", message =>
@@ -137,78 +163,38 @@ namespace PerformanceTest
                     SendMessageStats.SetElapsed(message.CreatedTime);
                 });
 
-                await ConnectCore();
-            }
-            finally
-            {
-                _lock.Release();
-            }
-        }
-
-        private async Task RetryConnect(Exception ex)
-        {
-            if (ex != null)
-            {
-                ConnectStats.AddException(ex);
-
-                Interlocked.Increment(ref ConnectStats.ErrorCount);
+                // set the auth time after the connection is built
+                _lastAuthTime = DateTime.UtcNow;
+                Connection = connection;
             }
 
-            var reconnectNow = DateTime.UtcNow;
-            while (true)
-            {
-                try
-                {
-                    // delay a random value < 20s
-                    await Task.Delay(new Random((int)Stopwatch.GetTimestamp()).Next(MinReconnectWaitMilliseconds, MaxReconnectWaitMilliseconds));
-                    if (DateTime.UtcNow > _lastAuthTime.AddMinutes(50))
-                    {
-                        // Reauth
-                        await AuthAndConnectCore(true);
-                    }
-                    else
-                    {
-                        // direct connect
-                        await ConnectCore();
-                    }
-
-                    RecoverStats.SetElapsed(reconnectNow);
-                    Interlocked.Increment(ref RecoverStats.SuccessCount);
-                    break;
-                }
-                catch (Exception e)
-                {
-                    RecoverStats.AddException(e);
-
-                    Interlocked.Increment(ref RecoverStats.ErrorCount);
-                    Interlocked.Increment(ref ConnectStats.ErrorCount);
-                }
-            }
-        }
-
-        private async Task ConnectCore()
-        {
-            lastConnectTime = DateTime.UtcNow;
+            _lastConnectTime = DateTime.UtcNow;
             Interlocked.Increment(ref ConnectStats.TotalCount);
-            await connection.StartAsync();
+            await Connection.StartAsync();
+        }
+
+        private Task OnClosed(Exception ex)
+        {
+            ConnectStatus = Status.Disconnected;
+            return RetryConnect(ex);
         }
 
         private async Task<(string, string)> GetAuth()
         {
-            string result = await _client.GetStringAsync($"{host}/auth/login/?username={userId}&password=admin");
+            string result = await _client.GetStringAsync($"{_host}/auth/login/?username={_userId}&password=admin");
 
             if (string.IsNullOrEmpty(result))
             {
-                logger.Error($"用户 {userId}登录失败");
+                logger.Error($"用户 {_userId}登录失败");
                 return (null, null);
             }
 
             try
             {
-                accessInfo = JsonConvert.DeserializeObject<AccessInfo>(result);
+                var accessInfo = JsonConvert.DeserializeObject<AccessInfo>(result);
                 if (!string.IsNullOrEmpty(accessInfo.Error))
                 {
-                    logger.Error($"用户 {userId} 登录失败," + accessInfo.Error);
+                    logger.Error($"用户 {_userId} 登录失败," + accessInfo.Error);
                     accessInfo = null;
                     return (null, null);
                 }
@@ -216,7 +202,7 @@ namespace PerformanceTest
             }
             catch (Exception ex)
             {
-                logger.Error(ex, $"用户 {userId} 登录失败");
+                logger.Error(ex, $"用户 {_userId} 登录失败");
                 return (null, null);
             }
         }
@@ -225,9 +211,9 @@ namespace PerformanceTest
         {
             try
             {
-                if (IsConnected)
+                if (ConnectStatus == Status.Connected)
                 {
-                    await connection.SendAsync("PerformanceTest", new MessageBody
+                    await Connection.SendAsync("PerformanceTest", new MessageBody
                     {
                         CreatedTime = DateTimeOffset.UtcNow,
                         Contnet = content

@@ -63,9 +63,9 @@ namespace PerformanceTest
 
         public void AddException(Exception e)
         {
-            var count = Exceptions.AddOrUpdate(e.GetType(), s => new ExceptionInfo(e), (s, c) =>
+            var count = Exceptions.AddOrUpdate(e.GetType(), s => new ExceptionInfo(e, _user), (s, c) =>
             {
-                c.AddOne();
+                c.AddOne(_user);
                 return c;
             });
         }
