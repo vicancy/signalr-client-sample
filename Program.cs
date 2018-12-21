@@ -223,7 +223,7 @@ namespace PerformanceTest
                 sb.Append($"\n\t[EXCEPTIONS]\n\t|\tFirst\t|\tLast\t|\tCount\t|\tDetail\t");
                 foreach (var i in dictionary)
                 {
-                    sb.Append($"\n\t|{i.Value.FirstOccurUtc}({i.Value.FirstOccurUser})|{i.Value.LastOccurUtc}({i.Value.LastOccurUser})|{i.Value.Count}|{i.Value.Exception}");
+                    sb.Append($"\n\t|{i.Value.FirstOccurUtc}({i.Value.FirstOccurUser})|{i.Value.LastOccurUtc}({i.Value.LastOccurUser})|{i.Value.Count}|{i.Value.Exception.Message}");
                 }
             }
 
