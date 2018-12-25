@@ -92,7 +92,7 @@ namespace PerformanceTest
                 {
                     try
                     {
-                        // delay a random value < 20s
+                        // delay a random value < 3s
                         await Task.Delay(new Random((int)Stopwatch.GetTimestamp()).Next(MinReconnectWaitMilliseconds, MaxReconnectWaitMilliseconds));
                         await ConnectCore();
                         RecoverStats.SetElapsed(reconnectNow);
