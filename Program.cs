@@ -14,7 +14,7 @@ namespace PerformanceTest
 {
     class Program
     {
-        static readonly string host = "https://signalrgameserver20181211040325.azurewebsites.net";
+        static readonly string host = "https://signalrgameserver-unit20.azurewebsites.net/";
         //static readonly string host = "http://localhost:5000";
 
         public class Options
